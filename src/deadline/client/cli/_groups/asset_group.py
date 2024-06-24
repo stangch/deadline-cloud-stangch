@@ -32,22 +32,23 @@ def cli_asset():
 
 @cli_asset.command(name="snapshot")
 @click.option("--root-dir", required=True, help="The root directory to snapshot. ")
-@click.option("--manifest-out-dir", help="Destination path to directory for created manifest. ")
+@click.option("--manifest-out", help="Destination path to directory for created manifest. ")
 @click.option(
-    "--r",
+    "--recursive",
+    "-r",
     help="Flag to recursively snapshot subdirectories. ",
     is_flag=True,
     show_default=True,
     default=False,
 )
 @_handle_error
-def asset_snapshot(r, **args):
+def asset_snapshot(recursive, **args):
     """
     Creates manifest of files specified root directory.
     """
     root_dir = args.pop("root_dir")
     root_dir_basename = os.path.basename(root_dir) + "_"
-    out_dir = args.pop("manifest_out_dir")
+    out_dir = args.pop("manifest_out")
 
     if not os.path.isdir(root_dir):
         misconfigured_directories_msg = f"Specified root directory {root_dir} does not exist. "
@@ -68,7 +69,7 @@ def asset_snapshot(r, **args):
         for file in files:
             file_full_path = str(os.path.join(root, file))
             inputs.append(file_full_path)
-        if not r:
+        if not recursive:
             break
 
     # Placeholder Asset Manager
@@ -126,7 +127,7 @@ def asset_upload(**args):
 
 @cli_asset.command(name="diff")
 @click.option("--root-dir", help="The root directory to compare changes to. ")
-@click.option("--manifest", help="The path to manifest of working directory to show changes of. ")
+@click.option("--manifest", help="The path to manifest folder of directory to show changes of. ")
 @click.option(
     "--print",
     help="Pretty prints diff information. ",
