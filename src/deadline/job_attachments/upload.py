@@ -259,12 +259,15 @@ class S3AssetUploader:
         manifest_write_dir: str,
         manifest_name: str,
         full_manifest_key: str,
+        manifest_dir_name: Optional[str],
     ):
         """
         Create or append to an existing mapping file. We use this since path lengths can go beyond the
         file name length limit on Windows if we were to create the full S3 key path locally.
         """
-        manifest_map_file = Path(manifest_write_dir, "manifests", "manifest_s3_mapping")
+        manifest_map_file = Path(
+            manifest_write_dir, manifest_dir_name or "manifests", "manifest_s3_mapping"
+        )
         mapping = {"local_file": manifest_name, "s3_key": full_manifest_key}
         with open(manifest_map_file, "a") as mapping_file:
             mapping_file.write(f"{mapping}\n")

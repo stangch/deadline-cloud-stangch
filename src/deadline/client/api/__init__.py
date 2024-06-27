@@ -58,7 +58,7 @@ from ._submit_job_bundle import (
     create_job_from_job_bundle,
     wait_for_create_job_to_complete,
     hash_attachments,
-    upload_attachments
+    upload_attachments,
 )
 from ._telemetry import (
     get_telemetry_client,

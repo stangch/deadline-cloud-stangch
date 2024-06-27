@@ -22,8 +22,6 @@ from .._common import _apply_cli_options_to_config, _handle_error, _ProgressBarC
 from ...exceptions import NonValidInputError
 from ...config import get_setting
 
-IGNORE_FILE: str = "manifests"
-
 
 @click.group(name="asset")
 @_handle_error
@@ -97,7 +95,6 @@ def asset_snapshot(recursive, **args):
 
     # Write created manifest into local file, at the specified location at out_dir
     for asset_root_manifests in manifests:
-        print(asset_root_manifests.asset_manifest)
         if asset_root_manifests.asset_manifest is None:
             continue
         source_root = Path(asset_root_manifests.root_path)
@@ -113,7 +110,9 @@ def asset_snapshot(recursive, **args):
 @cli_asset.command(name="upload")
 @click.option("--root-dir", help="The root directory of assets to upload. ")
 @click.option(
-    "--manifest", required=True, help="The path to manifest folder of the directory specified for upload. "
+    "--manifest",
+    required=True,
+    help="The path to manifest folder of the directory specified for upload. ",
 )
 @click.option("--farm-id", help="The AWS Deadline Cloud Farm to use. ")
 @click.option("--queue-id", help="The AWS Deadline Cloud Queue to use. ")
@@ -129,9 +128,17 @@ def asset_upload(root_dir, manifest, update, **args):
     """
     Uploads the assets in the provided manifest file to S3.
     """
-    # take config values of farm and queue
-        # what do current commands do ?
-        # failure to proved farm/queue ?
+    # test:
+    # - farm-id queue-id missing w / wo config
+    # - upload correct manifest / data
+    # - test auto update
+
+    # if no manifest /
+    #   -> FAIL
+    # if need to update manifets
+    # -> make new snapshot
+    # if no --root-dir
+    #   -> use default root dir where manifest lives, could fail
     config = _apply_cli_options_to_config(required_options={"farm_id", "queue_id"}, **args)
     upload_callback_manager = _ProgressBarCallbackManager(length=100, label="Uploading Attachments")
 
@@ -146,22 +153,24 @@ def asset_upload(root_dir, manifest, update, **args):
 
     # assume queue role - session permissions
     queue_role_session = api.get_queue_user_boto3_session(
-            deadline=deadline,
-            config=config,
-            farm_id=farm_id,
-            queue_id=queue_id,
-            queue_display_name=queue["displayName"],
-        )
+        deadline=deadline,
+        config=config,
+        farm_id=farm_id,
+        queue_id=queue_id,
+        queue_display_name=queue["displayName"],
+    )
 
     asset_manager = S3AssetManager(
-            farm_id=farm_id,
-            queue_id=queue_id,
-            job_attachment_settings=JobAttachmentS3Settings(**queue["jobAttachmentSettings"]),
-            session=queue_role_session,
-        )
-    
-    asset_manifest = None
+        farm_id=farm_id,
+        queue_id=queue_id,
+        job_attachment_settings=JobAttachmentS3Settings(**queue["jobAttachmentSettings"]),
+        session=queue_role_session,
+    )
 
+    asset_uploader = S3AssetUploader()
+
+    # read local manifest into BaseAssetManifest object
+    asset_manifest = None
     for filename in os.listdir(manifest):
         if filename.endswith("_input"):
             filepath = os.path.join(manifest, filename)
@@ -171,32 +180,30 @@ def asset_upload(root_dir, manifest, update, **args):
 
                 print("asset_manifest: ", asset_manifest)
 
-    # needs asset group ?
-        # prepare_paths_for_upload -> upload groups
-
-    
     asset_root_manifests: list[AssetRootManifest] = []
     asset_root_manifests.append(
-                AssetRootManifest(
-                    file_system_location_name=None,
-                    root_path=root_dir,
-                    asset_manifest=asset_manifest,
-                    outputs=[],
-                ))
+        AssetRootManifest(
+            root_path=root_dir,
+            asset_manifest=asset_manifest,
+        )
+    )
 
     attachment_settings = api.upload_attachments(
         asset_manager=asset_manager,
         manifests=asset_root_manifests,
         print_function_callback=click.echo,
         upload_progress_callback=upload_callback_manager.callback,
-        )
+    )
 
-    print(attachment_settings)
-    #S3 mapping
-
-
-    # prompt if changes needed
-    # --update for auto update snapshot
+    full_manifest_key = attachment_settings["manifests"][0]["inputManifestPath"]
+    manifest_name = os.path.basename(full_manifest_key)
+    manifest_dir_name = os.path.basename(manifest)
+    asset_uploader._write_local_manifest_s3_mapping(
+        manifest_write_dir=root_dir,
+        manifest_name=manifest_name,
+        full_manifest_key=full_manifest_key,
+        manifest_dir_name=manifest_dir_name,
+    )
 
     click.echo("upload done")
 
@@ -218,7 +225,9 @@ def asset_diff(**args):
 
     TODO: show example of diff output
     """
-    read_manifest_data("/Users/stangch/Desktop/maya_wrench_sample/maya_wrench_sample_manifests/eca77a3a0ba1f477b7f6cc397494b424_input")
+    read_manifest_data(
+        "/Users/stangch/Desktop/maya_wrench_sample/maya_wrench_sample_manifests/eca77a3a0ba1f477b7f6cc397494b424_input"
+    )
     click.echo("diff shown")
 
 
@@ -247,4 +256,3 @@ def read_manifest_data(manifest_path) -> list[tuple]:
             print(entry)
 
     return data_paths
-
