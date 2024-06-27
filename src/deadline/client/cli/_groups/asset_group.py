@@ -15,7 +15,7 @@ import click
 
 from deadline.client import api
 from deadline.job_attachments.upload import S3AssetManager, S3AssetUploader
-from deadline.job_attachments.models import JobAttachmentS3Settings
+from deadline.job_attachments.models import JobAttachmentS3Settings, AssetRootManifest
 from deadline.job_attachments.asset_manifests.decode import decode_manifest
 
 from .._common import _apply_cli_options_to_config, _handle_error, _ProgressBarCallbackManager
@@ -178,15 +178,15 @@ def asset_upload(root_dir, manifest, update, **args):
     asset_root_manifests: list[AssetRootManifest] = []
     asset_root_manifests.append(
                 AssetRootManifest(
-                    file_system_location_name=group.file_system_location_name,
-                    root_path=group.root_path,
+                    file_system_location_name=None,
+                    root_path=root_dir,
                     asset_manifest=asset_manifest,
-                    outputs=sorted(list(group.outputs)),
+                    outputs=[],
                 ))
 
     attachment_settings = api.upload_attachments(
         asset_manager=asset_manager,
-        manifests=[asset_manifest],
+        manifests=asset_root_manifests,
         print_function_callback=click.echo,
         upload_progress_callback=upload_callback_manager.callback,
         )
