@@ -9,6 +9,7 @@ All the `deadline asset` commands:
 """
 import os
 from pathlib import Path
+import concurrent.futures
 import json
 
 import click
@@ -18,9 +19,11 @@ from deadline.job_attachments.upload import S3AssetManager, S3AssetUploader
 from deadline.job_attachments.models import JobAttachmentS3Settings, AssetRootManifest
 from deadline.job_attachments.asset_manifests.decode import decode_manifest
 
+from deadline.job_attachments.caches import HashCache, CacheDB
+
 from .._common import _apply_cli_options_to_config, _handle_error, _ProgressBarCallbackManager
 from ...exceptions import NonValidInputError
-from ...config import get_setting
+from ...config import get_setting, config_file
 
 
 @click.group(name="asset")
@@ -124,7 +127,7 @@ def asset_snapshot(recursive, **args):
     default=False,
 )
 @_handle_error
-def asset_upload(root_dir, manifest, update, **args):
+def asset_upload(root_dir: str, manifest: str, update: bool, **args):
     """
     Uploads the assets in the provided manifest file to S3.
     """
@@ -133,12 +136,19 @@ def asset_upload(root_dir, manifest, update, **args):
     # - upload correct manifest / data
     # - test auto update
 
-    # if no manifest /
-    #   -> FAIL
+    # need:
+    # - case for valid manifest path but no manifest
+    # - case for invalid manifest path, path does not exist
+
     # if need to update manifets
+    # -> prompt for --update
     # -> make new snapshot
+
     # if no --root-dir
     #   -> use default root dir where manifest lives, could fail
+    asset_root_dir = Path(manifest).parent
+    print(asset_root_dir)
+
     config = _apply_cli_options_to_config(required_options={"farm_id", "queue_id"}, **args)
     upload_callback_manager = _ProgressBarCallbackManager(length=100, label="Uploading Attachments")
 
@@ -169,6 +179,10 @@ def asset_upload(root_dir, manifest, update, **args):
 
     asset_uploader = S3AssetUploader()
 
+    # def check manifest for updates
+    # how does JA upload check manifest to change ?
+    # check if local files have changed since manifest
+
     # read local manifest into BaseAssetManifest object
     asset_manifest = None
     for filename in os.listdir(manifest):
@@ -180,13 +194,19 @@ def asset_upload(root_dir, manifest, update, **args):
 
                 print("asset_manifest: ", asset_manifest)
 
+
+
     asset_root_manifests: list[AssetRootManifest] = []
     asset_root_manifests.append(
         AssetRootManifest(
-            root_path=root_dir,
+            root_path=asset_root_dir,
             asset_manifest=asset_manifest,
         )
     )
+
+    print("\n", is_directory_manifest_outdated(asset_manager=asset_manager, asset_root_manifest=asset_root_manifests[0]))
+
+    return
 
     attachment_settings = api.upload_attachments(
         asset_manager=asset_manager,
@@ -199,13 +219,13 @@ def asset_upload(root_dir, manifest, update, **args):
     manifest_name = os.path.basename(full_manifest_key)
     manifest_dir_name = os.path.basename(manifest)
     asset_uploader._write_local_manifest_s3_mapping(
-        manifest_write_dir=root_dir,
+        manifest_write_dir=asset_root_dir,
         manifest_name=manifest_name,
         full_manifest_key=full_manifest_key,
         manifest_dir_name=manifest_dir_name,
     )
 
-    click.echo("upload done")
+    click.echo(f"Upload of {asset_root_dir} complete. ")
 
 
 @cli_asset.command(name="diff")
@@ -256,3 +276,37 @@ def read_manifest_data(manifest_path) -> list[tuple]:
             print(entry)
 
     return data_paths
+
+
+def is_directory_manifest_outdated(
+    asset_manager: S3AssetManager, asset_root_manifest: AssetRootManifest
+) -> bool:
+    """
+    Checks a manifest file, compares it to specified root directory of files, and returns True if any file has been modified and is outdated, or file is new to the directory.
+    """
+    cache_config = config_file.get_cache_directory()
+    print("cache_config: ", cache_config)
+    # hash_cache = HashCache()
+    # print("hash_cache: ", hash_cache)
+    root_path = asset_root_manifest.root_path
+    input_paths = asset_root_manifest.asset_manifest.paths
+
+    with HashCache(cache_config) as hash_cache:
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = {
+                executor.submit(asset_manager._process_input_path, Path(os.path.join(root_path, path.path)), root_path, hash_cache): path
+                for path in input_paths
+            }
+            for future in concurrent.futures.as_completed(futures):
+                (is_new_or_modified, size, manifestPath) = future.result()
+                if is_new_or_modified:
+                    return True, size, manifestPath
+
+            return False, size, manifestPath
+
+    # for path in input_paths:
+    #     # print("path: ", root_path,path)
+    #     built_path = Path(os.path.join(root_path, path.path))
+    #     (is_new_or_modified, _, _) = asset_manager._process_input_path(built_path, root_path, hash_cache)
+    
+    #     print(f"result: {is_new_or_modified}, at {path}") 
