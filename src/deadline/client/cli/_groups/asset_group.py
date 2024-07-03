@@ -15,11 +15,11 @@ import json
 import click
 
 from deadline.client import api
-from deadline.job_attachments.upload import S3AssetManager, S3AssetUploader
-from deadline.job_attachments.models import JobAttachmentS3Settings, AssetRootManifest
+from deadline.job_attachments.upload import FileStatus, S3AssetManager, S3AssetUploader
+from deadline.job_attachments.models import JobAttachmentS3Settings, AssetRootManifest, BaseManifestPath
 from deadline.job_attachments.asset_manifests.decode import decode_manifest
 
-from deadline.job_attachments.caches import HashCache, CacheDB
+from deadline.job_attachments.caches import HashCache
 
 from .._common import _apply_cli_options_to_config, _handle_error, _ProgressBarCallbackManager
 from ...exceptions import NonValidInputError
@@ -278,11 +278,12 @@ def read_manifest_data(manifest_path) -> list[tuple]:
     return data_paths
 
 
-def is_directory_manifest_outdated(
+def directory_manifest_changes(
     asset_manager: S3AssetManager, asset_root_manifest: AssetRootManifest
-) -> bool:
+) -> list[(FileStatus, BaseManifestPath)]:
     """
-    Checks a manifest file, compares it to specified root directory of files, and returns True if any file has been modified and is outdated, or file is new to the directory.
+    Checks a manifest file, compares it to specified root directory of files with the local hash cache. 
+    Returns a list of tuples containing the file information, and its corresponding file status
     """
     cache_config = config_file.get_cache_directory()
     print("cache_config: ", cache_config)
@@ -291,22 +292,19 @@ def is_directory_manifest_outdated(
     root_path = asset_root_manifest.root_path
     input_paths = asset_root_manifest.asset_manifest.paths
 
+    ### !!! iterate through local directory files, not manifest paths
+
     with HashCache(cache_config) as hash_cache:
         with concurrent.futures.ThreadPoolExecutor() as executor:
             futures = {
-                executor.submit(asset_manager._process_input_path, Path(os.path.join(root_path, path.path)), root_path, hash_cache): path
+                executor.submit(asset_manager._process_input_path, path=Path(os.path.join(root_path, path.path)), root_path=root_path, hash_cache=hash_cache, update=False): path
                 for path in input_paths
             }
+            new_or_modified_paths: list[(FileStatus, BaseManifestPath)] = []
             for future in concurrent.futures.as_completed(futures):
-                (is_new_or_modified, size, manifestPath) = future.result()
-                if is_new_or_modified:
-                    return True, size, manifestPath
+                (file_status, _, manifestPath) = future.result()
+                if file_status is FileStatus.NEW or file_status is FileStatus.MODIFIED:
+                    new_or_modified_paths.append(file_status, manifestPath)
 
-            return False, size, manifestPath
+            return new_or_modified_paths
 
-    # for path in input_paths:
-    #     # print("path: ", root_path,path)
-    #     built_path = Path(os.path.join(root_path, path.path))
-    #     (is_new_or_modified, _, _) = asset_manager._process_input_path(built_path, root_path, hash_cache)
-    
-    #     print(f"result: {is_new_or_modified}, at {path}") 
