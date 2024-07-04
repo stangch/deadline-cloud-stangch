@@ -133,17 +133,15 @@ def asset_upload(root_dir: str, manifest: str, update: bool, **args):
     # - upload correct manifest / data
     # - test auto update
 
-    # need:
-    # - case for valid manifest path but no manifest
-    # - case for invalid manifest path, path does not exist
+    if root_dir is None:
+        asset_root_dir = Path(manifest).parent
+    else:
+        if not os.path.isdir(root_dir):
+            raise NonValidInputError(f"Specified root directory {root_dir} does not exist. ")
+        asset_root_dir = Path(root_dir)
 
-    # if need to update manifets
-    # -> prompt for --update
-
-    # if no --root-dir
-    #   -> use default root dir where manifest lives, could fail
-    asset_root_dir = Path(manifest).parent
-    print(asset_root_dir)
+    if not os.path.isdir(manifest):
+        raise NonValidInputError(f"Specified manifest directory {manifest} does not exist. ")
 
     config = _apply_cli_options_to_config(required_options={"farm_id", "queue_id"}, **args)
     upload_callback_manager = _ProgressBarCallbackManager(length=100, label="Uploading Attachments")
@@ -177,30 +175,40 @@ def asset_upload(root_dir: str, manifest: str, update: bool, **args):
 
     # read local manifest into BaseAssetManifest object
     asset_manifest = None
+    manifest_s3_mapping = None
     for filename in os.listdir(manifest):
         if filename.endswith("_input"):
             filepath = os.path.join(manifest, filename)
             with open(filepath, "r") as input_file:
+                # decode text file string into BaseAssetManifest 
                 manifest_data_str = input_file.read()
                 asset_manifest = decode_manifest(manifest_data_str)
+        if filename.endswith("manifest_s3_mapping"):
+            filepath = os.path.join(manifest, filename)
+            with open(filepath, "w") as s3_mapping_file:
+                # if S3 mapping already exists, clear contents
+                pass
 
+    if asset_manifest is None:
+        raise NonValidInputError(f"Specified manifest directory {manifest} does contain valid manifest input file. ")
+    
     asset_root_manifest = AssetRootManifest(
             root_path=asset_root_dir,
             asset_manifest=asset_manifest,
         )
     asset_root_manifests: list[AssetRootManifest] = [asset_root_manifest]
 
-    manifest_changes = get_manifest_changes(asset_manager=asset_manager, asset_root_manifest=asset_root_manifest, update=update)
+    manifest_changes = get_manifest_changes(asset_manager=asset_manager, asset_root_manifest=asset_root_manifest, manifest=manifest, update=update)
 
     print("changes: ", manifest_changes)
 
     # must update modified files, will either auto --update manifest or prompt user of file discrepancy
     if len(manifest_changes) > 0:
         if update:
-            update_manifest(manifest=manifest, new_or_modified_paths=manifest_changes)
-            click.echo(f"Manifest information updated: {len(manifest_changes)} files updated.\n")
+            asset_root_manifests[0].asset_manifest = update_manifest(manifest=manifest, new_or_modified_paths=manifest_changes)
+            click.echo(f"Manifest information updated: {len(manifest_changes)} files updated. \n")
         else:
-            raise ManifestOutdatedError(f"Manifest contents are outdated; versioning does not match local files in {asset_root_dir}. Please run with --update to fix current files. ")
+            raise ManifestOutdatedError(f"Manifest contents are outdated; versioning does not match local files in {asset_root_dir}. Please run with --update to fix current files. \n")
     
     attachment_settings = api.upload_attachments(
         asset_manager=asset_manager,
@@ -212,6 +220,7 @@ def asset_upload(root_dir: str, manifest: str, update: bool, **args):
     full_manifest_key = attachment_settings["manifests"][0]["inputManifestPath"]
     manifest_name = os.path.basename(full_manifest_key)
     manifest_dir_name = os.path.basename(manifest)
+    # delete old s3 mapping !!!
     asset_uploader._write_local_manifest_s3_mapping(
         manifest_write_dir=asset_root_dir,
         manifest_name=manifest_name,
@@ -287,15 +296,17 @@ def get_directory_changes():
 
     # return input_paths
 
-def get_manifest_changes(asset_manager: S3AssetManager, asset_root_manifest: AssetRootManifest, update: bool) -> list[(FileStatus, BaseManifestPath)]:
+def get_manifest_changes(asset_manager: S3AssetManager, asset_root_manifest: AssetRootManifest, manifest: str, update: bool) -> list[(FileStatus, BaseManifestPath)]:
     """
     Gets the file paths in specified manifest if the contents of file have changed since its last snapshot.
     """
-
+    manifest_dir_name = os.path.basename(manifest)
     root_path = asset_root_manifest.root_path
     input_paths = []
 
     for base_manifest_path in asset_root_manifest.asset_manifest.paths:
+        if base_manifest_path.path.startswith(manifest_dir_name):
+            continue
         input_paths.append(Path(root_path, base_manifest_path.path))
 
     return get_file_changes(asset_manager=asset_manager, input_paths=input_paths, root_path=root_path, update=update)
