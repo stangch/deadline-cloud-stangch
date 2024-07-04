@@ -9,12 +9,16 @@ All the `deadline asset` commands:
 """
 import os
 from pathlib import Path
+<<<<<<< HEAD
 import concurrent.futures
 import json
+=======
+>>>>>>> upstream/feature_assets_cli
 
 import click
 
 from deadline.client import api
+<<<<<<< HEAD
 from deadline.job_attachments.upload import FileStatus, S3AssetManager, S3AssetUploader
 from deadline.job_attachments.models import JobAttachmentS3Settings, AssetRootManifest, BaseManifestPath
 from deadline.job_attachments.asset_manifests.decode import decode_manifest
@@ -25,6 +29,13 @@ from deadline.job_attachments.caches import HashCache
 from .._common import _apply_cli_options_to_config, _handle_error, _ProgressBarCallbackManager
 from ...exceptions import NonValidInputError, ManifestOutdatedError
 from ...config import get_setting, config_file
+=======
+from deadline.job_attachments.upload import S3AssetManager, S3AssetUploader
+from deadline.job_attachments.models import JobAttachmentS3Settings
+
+from .._common import _handle_error, _ProgressBarCallbackManager
+from ...exceptions import NonValidInputError
+>>>>>>> upstream/feature_assets_cli
 
 
 @click.group(name="asset")
@@ -37,7 +48,13 @@ def cli_asset():
 
 @cli_asset.command(name="snapshot")
 @click.option("--root-dir", required=True, help="The root directory to snapshot. ")
+<<<<<<< HEAD
 @click.option("--manifest-out", help="Destination path to directory for created manifest. ")
+=======
+@click.option(
+    "--manifest-out", default=None, help="Destination path to directory where manifest is created. "
+)
+>>>>>>> upstream/feature_assets_cli
 @click.option(
     "--recursive",
     "-r",
@@ -108,11 +125,16 @@ def asset_snapshot(root_dir: str, manifest_out: str, recursive: bool, **args):
 
 
 @cli_asset.command(name="upload")
+<<<<<<< HEAD
 @click.option("--root-dir", help="The root directory of assets to upload. ")
 @click.option(
     "--manifest",
     required=True,
     help="The path to manifest folder of the directory specified for upload. ",
+=======
+@click.option(
+    "--manifest", help="The path to manifest folder of the directory specified for upload. "
+>>>>>>> upstream/feature_assets_cli
 )
 @click.option("--farm-id", help="The AWS Deadline Cloud Farm to use. ")
 @click.option("--queue-id", help="The AWS Deadline Cloud Queue to use. ")
@@ -124,6 +146,7 @@ def asset_snapshot(root_dir: str, manifest_out: str, recursive: bool, **args):
     default=False,
 )
 @_handle_error
+<<<<<<< HEAD
 def asset_upload(root_dir: str, manifest: str, update: bool, **args):
     """
     Uploads the assets in the provided manifest file to S3.
@@ -230,14 +253,30 @@ def asset_upload(root_dir: str, manifest: str, update: bool, **args):
     )
 
     click.echo(f"Upload of {asset_root_dir} complete. \n")
+=======
+def asset_upload(**args):
+    """
+    Uploads the assets in the provided manifest file to S3.
+    """
+    click.echo("upload done")
+>>>>>>> upstream/feature_assets_cli
 
 
 @cli_asset.command(name="diff")
 @click.option("--root-dir", help="The root directory to compare changes to. ")
+<<<<<<< HEAD
 @click.option("--manifest", help="The path to manifest folder of directory to show changes of. ")
 @click.option(
     "--print",
     help="Pretty prints diff information. ",
+=======
+@click.option(
+    "--manifest", help="The path to manifest folder of the directory to show changes of. "
+)
+@click.option(
+    "--format",
+    help="Pretty prints diff information with easy to read formatting. ",
+>>>>>>> upstream/feature_assets_cli
     is_flag=True,
     show_default=True,
     default=False,
@@ -249,7 +288,10 @@ def asset_diff(**args):
 
     TODO: show example of diff output
     """
+<<<<<<< HEAD
 
+=======
+>>>>>>> upstream/feature_assets_cli
     click.echo("diff shown")
 
 
@@ -263,6 +305,7 @@ def asset_download(**args):
     Downloads input manifest of previously submitted job.
     """
     click.echo("download complete")
+<<<<<<< HEAD
 
 
 def read_manifest_data(manifest_path) -> list[tuple]:
@@ -367,3 +410,5 @@ def update_manifest(manifest: str, new_or_modified_paths: list[(FileStatus, Base
             manifest_file.write(local_base_asset_manifest.encode())
 
     return local_base_asset_manifest
+=======
+>>>>>>> upstream/feature_assets_cli

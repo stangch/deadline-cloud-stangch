@@ -233,7 +233,11 @@ class S3AssetUploader:
         manifest_name: str,
         full_manifest_key: str,
         manifest: BaseAssetManifest,
+<<<<<<< HEAD
         root_dir_name: Optional[str],
+=======
+        root_dir_name: Optional[str] = None,
+>>>>>>> upstream/feature_assets_cli
     ) -> None:
         """
         Writes a manifest file locally in a 'manifests' sub-directory.
@@ -255,7 +259,11 @@ class S3AssetUploader:
         """
         input_manifest_folder_name = "manifests"
         if root_dir_name is not None:
+<<<<<<< HEAD
             input_manifest_folder_name = root_dir_name + input_manifest_folder_name
+=======
+            input_manifest_folder_name = root_dir_name + "_" + input_manifest_folder_name
+>>>>>>> upstream/feature_assets_cli
 
         local_manifest_file = Path(manifest_write_dir, input_manifest_folder_name, manifest_name)
         logger.info(f"Creating local manifest file: {local_manifest_file}\n")
@@ -268,15 +276,22 @@ class S3AssetUploader:
         manifest_write_dir: str,
         manifest_name: str,
         full_manifest_key: str,
+<<<<<<< HEAD
         manifest_dir_name: Optional[str],
+=======
+>>>>>>> upstream/feature_assets_cli
     ):
         """
         Create or append to an existing mapping file. We use this since path lengths can go beyond the
         file name length limit on Windows if we were to create the full S3 key path locally.
         """
+<<<<<<< HEAD
         manifest_map_file = Path(
             manifest_write_dir, manifest_dir_name or "manifests", "manifest_s3_mapping"
         )
+=======
+        manifest_map_file = Path(manifest_write_dir, "manifests", "manifest_s3_mapping")
+>>>>>>> upstream/feature_assets_cli
         mapping = {"local_file": manifest_name, "s3_key": full_manifest_key}
         with open(manifest_map_file, "a") as mapping_file:
             mapping_file.write(f"{mapping}\n")

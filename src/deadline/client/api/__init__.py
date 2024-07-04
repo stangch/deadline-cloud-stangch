@@ -5,7 +5,10 @@ __all__ = [
     "logout",
     "create_job_from_job_bundle",
     "hash_attachments",
+<<<<<<< HEAD
     "upload_attachments",
+=======
+>>>>>>> upstream/feature_assets_cli
     "wait_for_create_job_to_complete",
     "get_boto3_session",
     "get_boto3_client",
@@ -58,7 +61,10 @@ from ._submit_job_bundle import (
     create_job_from_job_bundle,
     wait_for_create_job_to_complete,
     hash_attachments,
+<<<<<<< HEAD
     upload_attachments,
+=======
+>>>>>>> upstream/feature_assets_cli
 )
 from ._telemetry import (
     get_telemetry_client,
