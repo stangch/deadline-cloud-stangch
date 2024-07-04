@@ -18,6 +18,7 @@ from deadline.client import api
 from deadline.job_attachments.upload import FileStatus, S3AssetManager, S3AssetUploader
 from deadline.job_attachments.models import JobAttachmentS3Settings, AssetRootManifest, BaseManifestPath
 from deadline.job_attachments.asset_manifests.decode import decode_manifest
+from deadline.job_attachments.asset_manifests.base_manifest import  BaseAssetManifest
 
 from deadline.job_attachments.caches import HashCache
 
@@ -174,10 +175,6 @@ def asset_upload(root_dir: str, manifest: str, update: bool, **args):
 
     asset_uploader = S3AssetUploader()
 
-    # def check manifest for updates
-    # how does JA upload check manifest to change ?
-    # check if local files have changed since manifest
-
     # read local manifest into BaseAssetManifest object
     asset_manifest = None
     for filename in os.listdir(manifest):
@@ -187,36 +184,24 @@ def asset_upload(root_dir: str, manifest: str, update: bool, **args):
                 manifest_data_str = input_file.read()
                 asset_manifest = decode_manifest(manifest_data_str)
 
-                # print("asset_manifest: ", asset_manifest)
-
-
-
-    asset_root_manifests: list[AssetRootManifest] = []
-    asset_root_manifests.append(
-        AssetRootManifest(
+    asset_root_manifest = AssetRootManifest(
             root_path=asset_root_dir,
             asset_manifest=asset_manifest,
         )
-    )
+    asset_root_manifests: list[AssetRootManifest] = [asset_root_manifest]
 
-    # 
-    directory_manifest_changes = get_directory_manifest_changes(asset_manager=asset_manager, asset_root_manifest=asset_root_manifests[0], manifest=manifest, update=update)
-    directory_manifest_changes_modified_only = []
-    for file_status, manifest_path in directory_manifest_changes:
-        if file_status is FileStatus.MODIFIED:
-            directory_manifest_changes_modified_only.append((file_status, manifest_path))
+    manifest_changes = get_manifest_changes(asset_manager=asset_manager, asset_root_manifest=asset_root_manifest, update=update)
 
-    print("changes: ", directory_manifest_changes_modified_only)
+    print("changes: ", manifest_changes)
 
     # must update modified files, will either auto --update manifest or prompt user of file discrepancy
-    if len(directory_manifest_changes_modified_only) > 0:
+    if len(manifest_changes) > 0:
         if update:
-            # calls snapshot to update hashes of manifest
-            
-            None
+            update_manifest(manifest=manifest, new_or_modified_paths=manifest_changes)
+            click.echo(f"Manifest information updated: {len(manifest_changes)} files updated.\n")
         else:
             raise ManifestOutdatedError(f"Manifest contents are outdated; versioning does not match local files in {asset_root_dir}. Please run with --update to fix current files. ")
-
+    
     attachment_settings = api.upload_attachments(
         asset_manager=asset_manager,
         manifests=asset_root_manifests,
@@ -254,9 +239,7 @@ def asset_diff(**args):
 
     TODO: show example of diff output
     """
-    read_manifest_data(
-        "/Users/stangch/Desktop/maya_wrench_sample/maya_wrench_sample_manifests/eca77a3a0ba1f477b7f6cc397494b424_input"
-    )
+
     click.echo("diff shown")
 
 
@@ -288,47 +271,49 @@ def read_manifest_data(manifest_path) -> list[tuple]:
 
 def get_directory_changes():
     """
-    TODO: gets changes of a directory
+    TODO: Gets the file paths in specified directory if the contents of file have changed compared to a specified snapshot of the respective directory.
     """
-    None
 
-def get_manifest_changes():
+    # root_path = asset_root_manifest.root_path
+
+    # input_paths = []
+    # for root, dirs, files in os.walk(root_path):
+    #     if os.path.samefile(root, manifest):
+    #         dirs[:] = []
+    #         continue
+    #     for filename in files:
+    #         file_path = os.path.join(root, filename)
+    #         input_paths.append(file_path)
+
+    # return input_paths
+
+def get_manifest_changes(asset_manager: S3AssetManager, asset_root_manifest: AssetRootManifest, update: bool) -> list[(FileStatus, BaseManifestPath)]:
     """
-    
+    Gets the file paths in specified manifest if the contents of file have changed since its last snapshot.
     """
-    # used by upload, to get modified files of a manifest
-    None
+
+    root_path = asset_root_manifest.root_path
+    input_paths = []
+
+    for base_manifest_path in asset_root_manifest.asset_manifest.paths:
+        input_paths.append(Path(root_path, base_manifest_path.path))
+
+    return get_file_changes(asset_manager=asset_manager, input_paths=input_paths, root_path=root_path, update=update)
 
 
-# but do we diff against directory vs manifest or directory vs hash cache ????
 def get_file_changes(
-    asset_manager: S3AssetManager, asset_root_manifest: AssetRootManifest, manifest: str, update: bool
+    asset_manager: S3AssetManager, input_paths: list[Path],root_path: str, update: bool
 ) -> list[(FileStatus, BaseManifestPath)]:
     """
     Checks a manifest file, compares it to specified root directory or manifest of files with the local hash cache. 
-    Returns a list of tuples containing the file information, and its corresponding file status
+    Returns a list of tuples containing the file information, and its corresponding file status.
     """
     cache_config = config_file.get_cache_directory()
-
-    root_path = asset_root_manifest.root_path
-
-
-    input_paths = []
-    for root, dirs, files in os.walk(root_path):
-        if os.path.samefile(root, manifest):
-            dirs[:] = []
-            continue
-        for filename in files:
-            file_path = os.path.join(root, filename)
-            input_paths.append(file_path)
-
-    print("input: ", input_paths)
-
 
     with HashCache(cache_config) as hash_cache:
         with concurrent.futures.ThreadPoolExecutor() as executor:
             futures = {
-                executor.submit(asset_manager._process_input_path, path=Path(root_path, path), root_path=root_path, hash_cache=hash_cache, update=update): path
+                executor.submit(asset_manager._process_input_path, path=path, root_path=root_path, hash_cache=hash_cache, update=update): path
                 for path in input_paths
             }
             new_or_modified_paths: list[(FileStatus, BaseManifestPath)] = []
@@ -338,10 +323,33 @@ def get_file_changes(
                     new_or_modified_paths.append((file_status, manifestPath))
 
             return new_or_modified_paths
+        
 
-"""
-tldr, we want upload to only upload whats in the manifest. If there are modifications, we update the mods only. if users want to add
-more files, they must snapshot. 
+def update_manifest(manifest: str, new_or_modified_paths: list[(FileStatus, BaseManifestPath)]) -> BaseAssetManifest:
+    """
+    Updates the local manifest file to reflect modified or new files
+    """
+    for filename in os.listdir(manifest):
+        if filename.endswith("_input"):
+            manifest_file_path = os.path.join(manifest, filename)
+            with open(manifest_file_path, "r") as manifest_file:
+                manifest_data_str = manifest_file.read()
+                local_base_asset_manifest = decode_manifest(manifest_data_str)
 
-upload -> check manifest paths -> grab local files from manifest paths -> update or not update -> upload
-"""
+    manifest_info_dict = {base_manifest_path.path: base_manifest_path for base_manifest_path in local_base_asset_manifest.paths}
+
+    for _, base_asset_manifest in new_or_modified_paths:
+        if base_asset_manifest.path in manifest_info_dict:
+            # Update the hash_value of the existing object
+            manifest_info_dict[base_asset_manifest.path].hash = base_asset_manifest.hash
+        else:
+            # Add the new object if it doesn't exist
+            manifest_info_dict[base_asset_manifest.path] = base_asset_manifest
+
+    # write ot local manifest
+    updated_path_list = list(manifest_info_dict.values())
+    local_base_asset_manifest.paths = updated_path_list
+    with open(manifest_file_path, "w") as manifest_file:
+            manifest_file.write(local_base_asset_manifest.encode())
+
+    return local_base_asset_manifest
