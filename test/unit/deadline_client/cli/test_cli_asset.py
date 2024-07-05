@@ -1,122 +1,23 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
-<<<<<<< HEAD
-"""
-Tests for the CLI asset commands.
-"""
+import pytest
 import os
-import json
-from click.testing import CliRunner
-import pytest
-import tempfile
-import posixpath
-
-from deadline.client.cli import main
-
-
-@pytest.fixture
-def temp_dir():
-    with tempfile.TemporaryDirectory() as tmpdirname:
-        yield tmpdirname
-
-
-def test_cli_asset_snapshot_valid_root_dir(temp_dir):
-    root_dir = os.path.join(temp_dir, "root_dir")
-    os.makedirs(root_dir)
-    file_path = os.path.join(root_dir, "file.txt")
-    with open(file_path, "w") as f:
-        f.write("test file content")
-
-    runner = CliRunner()
-    runner.invoke(main, ["asset", "snapshot", "--root-dir", root_dir])
-
-    # Check manifest file details to match correct content
-    # since manifest file name is hashed depending on source location, we have to list out manifest
-    manifest_folder_path = os.path.join(root_dir, f"{os.path.basename(root_dir)}_manifests")
-    manifest_file_name = os.listdir(manifest_folder_path)[0]
-    manifest_file_path = os.path.join(manifest_folder_path, manifest_file_name)
-
-    with open(manifest_file_path, "r") as f:
-        manifest_data = json.load(f)
-        print(manifest_data["paths"][0]["hash"])
-        assert manifest_data["paths"][0]["path"] == "file.txt"
-        assert manifest_data["paths"][0]["hash"] == "0741993e50c8bc250cefba3959c81eb8"
-
-
-def test_cli_asset_snapshot_invalid_root_dir(temp_dir):
-    invalid_root_dir = os.path.join(temp_dir, "invalid_root_dir")
-    runner = CliRunner()
-    result = runner.invoke(main, ["asset", "snapshot", "--root-dir", invalid_root_dir])
-    assert result.exit_code == 1
-
-
-def test_cli_asset_snapshot_recursive(temp_dir):
-    root_dir = os.path.join(temp_dir, "root_dir")
-    os.makedirs(os.path.join(root_dir, "subdir1", "subdir2"))
-
-    # Create a file in the root directory
-    root_file_path = os.path.join(root_dir, "root_file.txt")
-    with open(root_file_path, "w") as f:
-        f.write("root file content")
-
-    # Create a file in the subdirectory
-    subdir_file_path = os.path.join(root_dir, "subdir1", "subdir2", "subdir_file.txt")
-    os.makedirs(os.path.dirname(subdir_file_path), exist_ok=True)
-    with open(subdir_file_path, "w") as f:
-        f.write("subdir file content")
-
-    runner = CliRunner()
-    runner.invoke(main, ["asset", "snapshot", "--root-dir", root_dir, "--recursive"])
-
-    # Check manifest file details to match correct content
-    # since manifest file name is hashed depending on source location, we have to list out manifest
-    manifest_folder_path = os.path.join(root_dir, f"{os.path.basename(root_dir)}_manifests")
-    root_manifest_file_name = [file for file in os.listdir(manifest_folder_path)][0]
-    root_manifest_file_path = os.path.join(manifest_folder_path, root_manifest_file_name)
-    with open(root_manifest_file_path, "r") as f:
-        manifest_data = json.load(f)
-        assert manifest_data["paths"][0]["path"] == "root_file.txt"
-        assert manifest_data["paths"][0]["hash"] == "a5fc4a07191e2c90364319d2fd503cc1"
-        assert manifest_data["paths"][1]["path"] == posixpath.join(
-            "subdir1", "subdir2", "subdir_file.txt"
-        )
-        assert manifest_data["paths"][1]["hash"] == "a3ede7fa4c2694d59ff09ed553fcc806"
-
-
-def test_cli_asset_snapshot_valid_manifest_out_dir(temp_dir):
-    root_dir = os.path.join(temp_dir, "root_dir")
-    os.makedirs(root_dir)
-    manifest_out_dir = os.path.join(temp_dir, "manifest_out")
-    os.makedirs(manifest_out_dir)
-    file_path = os.path.join(root_dir, "file.txt")
-    with open(file_path, "w") as f:
-        f.write("test file content")
-
-    runner = CliRunner()
-    runner.invoke(
-        main, ["asset", "snapshot", "--root-dir", root_dir, "--manifest-out", manifest_out_dir]
-    )
-
-    # Check manifest file details to match correct content
-    # since manifest file name is hashed depending on source location, we have to list out manifest
-    manifest_folder_path = os.path.join(manifest_out_dir, f"{os.path.basename(root_dir)}_manifests")
-    manifest_file_name = os.listdir(manifest_folder_path)[0]
-    manifest_file_path = os.path.join(manifest_folder_path, manifest_file_name)
-
-    with open(manifest_file_path, "r") as f:
-        manifest_data = json.load(f)
-        print(manifest_data["paths"][0]["hash"])
-        assert manifest_data["paths"][0]["path"] == "file.txt"
-        assert manifest_data["paths"][0]["hash"] == "0741993e50c8bc250cefba3959c81eb8"
-=======
-import pytest
 from unittest.mock import patch, Mock
 from click.testing import CliRunner
 
 from deadline.client.cli import main
+from deadline.client.cli._groups import asset_group
 from deadline.client import api
-from deadline.job_attachments.upload import S3AssetManager
-from deadline.job_attachments.models import AssetRootGroup
+from deadline.client.api import _submit_job_bundle
+from deadline.job_attachments.models import AssetRootGroup, JobAttachmentS3Settings, Attachments
+from deadline.job_attachments.upload import S3AssetManager, S3AssetUploader
+from deadline.job_attachments.asset_manifests.v2023_03_03 import AssetManifest
+from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
+
+from ..api.test_job_bundle_submission import (
+    MOCK_FARM_ID,
+    MOCK_QUEUE_ID,
+)
 
 
 @pytest.fixture
@@ -149,6 +50,45 @@ def upload_group_mock(asset_group_mock):
         total_input_files=1,
         total_input_bytes=100,
     )
+
+
+@pytest.fixture
+def mock_asset_manifest():
+    return AssetManifest(paths=[], hash_alg=HashAlgorithm("xxh128"), total_size=0)
+
+
+@pytest.fixture
+def mock_attachment_settings():
+    return Attachments(manifests=[], fileSystem="").to_dict
+
+
+@pytest.fixture
+def mock_init_objects():
+    with patch.object(S3AssetManager, "__init__", lambda self, *args, **kwargs: None), patch.object(
+        S3AssetUploader, "__init__", lambda self, *args, **kwargs: None
+    ), patch.object(JobAttachmentS3Settings, "__init__", lambda self, *args, **kwargs: None):
+        yield
+
+
+@pytest.fixture
+def mock_update_manifest():
+    with patch.object(asset_group, "update_manifest", return_value=mock_asset_manifest) as mock:
+        yield mock
+
+
+@pytest.fixture
+def mock_upload_attachments():
+    with patch.object(
+        _submit_job_bundle.api, "upload_attachments", return_value=MOCK_UPLOAD_ATTACHMENTS_RESPONSE
+    ) as mock:
+        yield mock
+
+
+MOCK_ROOT_DIR = "/path/to/root"
+MOCK_MANIFEST_DIR = "/path/to/manifest"
+MOCK_MANIFEST_FILE = os.path.join(MOCK_MANIFEST_DIR, "manifest_input")
+MOCK_INVALID_DIR = "/nopath/"
+MOCK_UPLOAD_ATTACHMENTS_RESPONSE = {"manifests": [{"inputManifestPath": "s3://mock/manifest.json"}]}
 
 
 class TestSnapshot:
@@ -264,4 +204,215 @@ class TestSnapshot:
         actual_inputs = set(mock_prepare_paths_for_upload.call_args[1]["input_paths"])
         assert actual_inputs == expected_inputs
         mock_hash_attachments.assert_called_once()
->>>>>>> upstream/feature_assets_cli
+
+
+class TestUpload:
+
+    def test_upload_valid_manifest(
+        fresh_deadline_config, mock_init_objects, mock_upload_attachments
+    ):
+        """
+        Test the asset upload command with correct arguments and valid manifest path.
+        """
+        mock_root_dir = "/path/to/root"
+        mock_manifest_dir = "/path/to/root/root_manifests"
+
+        with patch.object(_submit_job_bundle.api, "get_boto3_client"), patch.object(
+            _submit_job_bundle.api, "get_queue_user_boto3_session"
+        ), patch.object(os.path, "isdir", side_effect=[True, True]), patch.object(
+            os, "listdir", return_value=["manifest_input"]
+        ), patch.object(
+            asset_group, "read_local_manifest", return_value=mock_asset_manifest
+        ), patch.object(
+            asset_group, "get_manifest_changes", return_value=[]
+        ), patch.object(
+            S3AssetUploader, "_write_local_manifest_s3_mapping"
+        ) as mock_write_manifest_mapping:
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main,
+                [
+                    "asset",
+                    "upload",
+                    "--root-dir",
+                    mock_root_dir,
+                    "--manifest",
+                    mock_manifest_dir,
+                    "--farm-id",
+                    MOCK_FARM_ID,
+                    "--queue-id",
+                    MOCK_QUEUE_ID,
+                ],
+            )
+
+            full_manifest_key = MOCK_UPLOAD_ATTACHMENTS_RESPONSE["manifests"][0][
+                "inputManifestPath"
+            ]
+            manifest_name = os.path.basename(full_manifest_key)
+            manifest_dir_name = os.path.basename(mock_manifest_dir)
+
+            mock_write_manifest_mapping.assert_called_once_with(
+                manifest_write_dir=mock_root_dir,
+                manifest_name=manifest_name,
+                full_manifest_key=full_manifest_key,
+                manifest_dir_name=manifest_dir_name,
+            )
+            mock_upload_attachments.assert_called_once()
+            assert result.exit_code == 0
+
+    def test_upload_invalid_manifest_dir(fresh_deadline_config):
+        """
+        Test the asset upload command when the manifest directory is not a valid directory.
+        """
+        with patch("deadline.client.cli._groups.asset_group.os.path.isdir", return_value=False):
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main,
+                [
+                    "asset",
+                    "upload",
+                    "--root-dir",
+                    MOCK_ROOT_DIR,
+                    "--manifest",
+                    MOCK_INVALID_DIR,
+                    "--farm-id",
+                    MOCK_FARM_ID,
+                    "--queue-id",
+                    MOCK_QUEUE_ID,
+                ],
+            )
+
+            assert f"Specified manifest directory {MOCK_INVALID_DIR} does not exist. "
+            assert result.exit_code == 1
+
+    def test_upload_with_update(
+        fresh_deadline_config, mock_init_objects, mock_update_manifest, mock_upload_attachments
+    ):
+        """
+        Test the asset upload command with the --update flag, and manifest has valid updates to find.
+        """
+
+        with patch.object(_submit_job_bundle.api, "get_boto3_client"), patch.object(
+            _submit_job_bundle.api, "get_queue_user_boto3_session"
+        ), patch.object(os.path, "isdir", side_effect=[True, True]), patch.object(
+            os, "listdir", return_value=["manifest_input"]
+        ), patch.object(
+            asset_group, "read_local_manifest", return_value=mock_asset_manifest
+        ), patch.object(
+            asset_group, "get_manifest_changes", return_value=["/path/to/modified/file.txt"]
+        ), patch.object(
+            S3AssetUploader, "_write_local_manifest_s3_mapping"
+        ) as mock_write_manifest_mapping:
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main,
+                [
+                    "asset",
+                    "upload",
+                    "--root-dir",
+                    MOCK_ROOT_DIR,
+                    "--manifest",
+                    MOCK_MANIFEST_DIR,
+                    "--farm-id",
+                    MOCK_FARM_ID,
+                    "--queue-id",
+                    MOCK_QUEUE_ID,
+                    "--update",
+                ],
+            )
+
+            full_manifest_key = MOCK_UPLOAD_ATTACHMENTS_RESPONSE["manifests"][0][
+                "inputManifestPath"
+            ]
+            manifest_name = os.path.basename(full_manifest_key)
+            manifest_dir_name = os.path.basename(MOCK_MANIFEST_DIR)
+
+            mock_write_manifest_mapping.assert_called_once_with(
+                manifest_write_dir=MOCK_ROOT_DIR,
+                manifest_name=manifest_name,
+                full_manifest_key=full_manifest_key,
+                manifest_dir_name=manifest_dir_name,
+            )
+            mock_upload_attachments.assert_called_once()
+            assert "Manifest information updated:" in result.output
+            assert result.exit_code == 0
+
+    def testpload_with_modified_files_without_update(fresh_deadline_config, mock_init_objects):
+        """
+        Test the asset upload command when there are modified files, but the --update flag is not provided.
+        """
+        mock_modified_files = ["/path/to/modified/file1.txt", "/path/to/modified/file2.txt"]
+
+        with patch.object(_submit_job_bundle.api, "get_boto3_client"), patch.object(
+            _submit_job_bundle.api, "get_queue_user_boto3_session"
+        ), patch.object(os.path, "isdir", side_effect=[True, True]), patch.object(
+            os, "listdir", return_value=["manifest_input"]
+        ), patch.object(
+            asset_group, "read_local_manifest", return_value=mock_asset_manifest
+        ), patch.object(
+            asset_group, "get_manifest_changes", return_value=mock_modified_files
+        ):
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main,
+                [
+                    "asset",
+                    "upload",
+                    "--root-dir",
+                    MOCK_ROOT_DIR,
+                    "--manifest",
+                    MOCK_MANIFEST_DIR,
+                    "--farm-id",
+                    MOCK_FARM_ID,
+                    "--queue-id",
+                    MOCK_QUEUE_ID,
+                ],
+            )
+
+            assert (
+                f"Manifest contents in {MOCK_MANIFEST_DIR} are outdated; versioning does not match local files in {MOCK_ROOT_DIR}. Please run with --update to fix current files. "
+                in result.output
+            )
+            assert result.exit_code == 1
+
+    def test_cli_asset_upload_read_local_manifest_returns_none(
+        fresh_deadline_config, mock_init_objects
+    ):
+        """
+        Test the asset upload command when the read_local_manifest function returns None.
+        """
+
+        with patch.object(_submit_job_bundle.api, "get_boto3_client"), patch.object(
+            _submit_job_bundle.api, "get_queue_user_boto3_session"
+        ), patch.object(os.path, "isdir", side_effect=[True, True]), patch.object(
+            os, "listdir", return_value=["manifest_input"]
+        ), patch.object(
+            asset_group, "read_local_manifest", return_value=None
+        ):
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main,
+                [
+                    "asset",
+                    "upload",
+                    "--root-dir",
+                    MOCK_ROOT_DIR,
+                    "--manifest",
+                    MOCK_MANIFEST_DIR,
+                    "--farm-id",
+                    MOCK_FARM_ID,
+                    "--queue-id",
+                    MOCK_QUEUE_ID,
+                ],
+            )
+
+            assert (
+                f"Specified manifest directory {MOCK_MANIFEST_DIR} does contain valid manifest input file."
+                in result.output
+            )
+            assert result.exit_code == 1
