@@ -10,6 +10,7 @@ All the `deadline asset` commands:
 import os
 from pathlib import Path
 import concurrent.futures
+from typing import List
 
 import click
 
@@ -186,7 +187,7 @@ def asset_upload(root_dir: str, manifest: str, update: bool, **args):
         root_path=asset_root_dir,
         asset_manifest=asset_manifest,
     )
-    asset_root_manifests: list[AssetRootManifest] = [asset_root_manifest]
+    asset_root_manifests: List[AssetRootManifest] = [asset_root_manifest]
 
     manifest_changes = get_manifest_changes(
         asset_manager=asset_manager,
@@ -317,13 +318,13 @@ def get_manifest_changes(
     asset_root_manifest: AssetRootManifest,
     manifest: str,
     update: bool,
-) -> list[(tuple)]:
+) -> List[(tuple)]:
     """
     Gets the file paths in specified manifest if the contents of file have changed since its last snapshot.
     """
     manifest_dir_name = os.path.basename(manifest)
     root_path = asset_root_manifest.root_path
-    input_paths: list[Path] = []
+    input_paths: List[Path] = []
 
     asset_manifest = asset_root_manifest.asset_manifest
     if asset_manifest is None:
@@ -341,8 +342,8 @@ def get_manifest_changes(
 
 
 def get_file_changes(
-    asset_manager: S3AssetManager, input_paths: list[Path], root_path: str, update: bool
-) -> list[(tuple)]:
+    asset_manager: S3AssetManager, input_paths: List[Path], root_path: str, update: bool
+) -> List[(tuple)]:
     """
     Checks a manifest file, compares it to specified root directory or manifest of files with the local hash cache.
     Returns a list of tuples containing the file information, and its corresponding file status.
@@ -361,7 +362,7 @@ def get_file_changes(
                 ): path
                 for path in input_paths
             }
-            new_or_modified_paths: list[(tuple)] = []
+            new_or_modified_paths: List[(tuple)] = []
             for future in concurrent.futures.as_completed(futures):
                 (file_status, _, manifestPath) = future.result()
                 if file_status is FileStatus.NEW or file_status is FileStatus.MODIFIED:
@@ -370,7 +371,7 @@ def get_file_changes(
             return new_or_modified_paths
 
 
-def update_manifest(manifest: str, new_or_modified_paths: list[(tuple)]) -> BaseAssetManifest:
+def update_manifest(manifest: str, new_or_modified_paths: List[(tuple)]) -> BaseAssetManifest:
     """
     Updates the local manifest file to reflect modified or new files
     """
