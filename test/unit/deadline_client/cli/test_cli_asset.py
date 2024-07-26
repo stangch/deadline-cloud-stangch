@@ -1,9 +1,10 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
+import os
 import pytest
 from unittest.mock import patch, Mock, MagicMock
 from click.testing import CliRunner
-import os
+
 
 from deadline.client.cli import main
 from deadline.client.cli._groups import asset_group
@@ -20,9 +21,10 @@ from deadline.job_attachments.asset_manifests.base_manifest import BaseManifestP
 from deadline.job_attachments.asset_manifests.v2023_03_03 import AssetManifest
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
 
-from ..api.test_job_bundle_submission import (
+from ..shared_constants import (
     MOCK_FARM_ID,
     MOCK_QUEUE_ID,
+    MOCK_JOB_ID,
 )
 
 
@@ -150,9 +152,27 @@ def mock_read_local_manifest():
 
 MOCK_ROOT_DIR = "/path/to/root"
 MOCK_MANIFEST_DIR = "/path/to/manifest"
+MOCK_MANIFEST_OUT_DIR = "path/to/out/dir"
 MOCK_MANIFEST_FILE = os.path.join(MOCK_MANIFEST_DIR, "manifest_input")
 MOCK_INVALID_DIR = "/nopath/"
 MOCK_UPLOAD_ATTACHMENTS_RESPONSE = {"manifests": [{"inputManifestPath": "s3://mock/manifest.json"}]}
+MOCK_JOB_ATTACHMENTS = {
+    "manifests": [
+        {
+            "inputManifestHash": "mock_input_manifest_hash",
+            "inputManifestPath": "mock_input_manifest_path",
+            "outputRelativeDirectories": ["mock_output_dir"],
+            "rootPath": "mock_root_path",
+            "rootPathFormat": "mock_root_path_format",
+        }
+    ]
+}
+MOCK_QUEUE = {
+    "queueId": "queue-0123456789abcdef0123456789abcdef",
+    "displayName": "mock_queue",
+    "description": "mock_description",
+    "jobAttachmentSettings": {"s3BucketName": "mock_bucket"},
+}
 
 
 class TestSnapshot:
@@ -582,4 +602,97 @@ class TestDiff:
         assert result.exit_code == 1
         assert (
             f"Specified manifest directory {invalid_manifest_dir} does not exist. " in result.output
+        )
+
+
+class TestAssetDownload:
+    def test_asset_download_valid(self, fresh_deadline_config):
+        """
+        Test the asset download command with valid inputs.
+        """
+
+        # Mock the API calls
+        with patch.object(api, "get_boto3_client") as mock_get_boto3_client, patch.object(
+            api, "get_queue_user_boto3_session"
+        ), patch.object(os.path, "isdir", side_effect=[True, True]), patch.object(
+            mock_get_boto3_client.return_value,
+            "get_job",
+            return_value={"attachments": MOCK_JOB_ATTACHMENTS},
+        ), patch.object(
+            mock_get_boto3_client.return_value,
+            "get_queue",
+            return_value=MOCK_QUEUE,
+        ), patch.object(
+            asset_group, "download_file_with_s3_key", return_value=None
+        ) as mock_download_file:
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main,
+                [
+                    "asset",
+                    "download",
+                    "--farm-id",
+                    MOCK_FARM_ID,
+                    "--queue-id",
+                    MOCK_QUEUE_ID,
+                    "--job-id",
+                    MOCK_JOB_ID,
+                    "--manifest-out",
+                    MOCK_MANIFEST_OUT_DIR,
+                ],
+            )
+
+        mock_download_file.assert_called_once()
+        assert result.exit_code == 0
+        assert f"Downloaded {MOCK_JOB_ID} manifest to {MOCK_MANIFEST_OUT_DIR}" in result.output
+
+    def test_download_invalid_job_id(self, fresh_deadline_config):
+        """
+        Test the asset download command when the required --job-id option is missing.
+        """
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "asset",
+                "download",
+                "--farm-id",
+                MOCK_FARM_ID,
+                "--queue-id",
+                MOCK_QUEUE_ID,
+                "--manifest-out",
+                MOCK_MANIFEST_OUT_DIR,
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert "Error: Missing option '--job-id'" in result.output
+
+    def test_download_invalid_manifest_out(self, fresh_deadline_config):
+        """
+        Test the asset download command when the required --manifest-out option is missing.
+        """
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "asset",
+                "download",
+                "--farm-id",
+                MOCK_FARM_ID,
+                "--queue-id",
+                MOCK_QUEUE_ID,
+                "--job-id",
+                MOCK_JOB_ID,
+                "--manifest-out",
+                MOCK_INVALID_DIR,
+            ],
+        )
+
+        print(result.output)
+
+        assert result.exit_code == 1
+        assert (
+            f"Specified destination directory {MOCK_INVALID_DIR} does not exist. " in result.output
         )

@@ -372,48 +372,20 @@ def download_files_in_directory(
     )
 
 
-def download_file(
-    file: RelativeFilePath,
-    hash_algorithm: HashAlgorithm,
-    local_download_dir: str,
+def download_file_with_s3_key(
     s3_bucket: str,
-    cas_prefix: Optional[str],
-    s3_client: Optional[BaseClient] = None,
+    s3_key: str,
+    transfer_manager,
+    local_file_name: Path,
+    file_bytes: Optional[int] = 0,
     session: Optional[boto3.Session] = None,
-    modified_time_override: Optional[float] = None,
     progress_tracker: Optional[ProgressTracker] = None,
     file_conflict_resolution: Optional[FileConflictResolution] = FileConflictResolution.CREATE_COPY,
-) -> Tuple[int, Optional[Path]]:
-    """
-    Downloads a file from the S3 bucket to the local directory. `modified_time_override` is ignored if the manifest
-    version used supports timestamps.
-    Returns a tuple of (size in bytes, filename) of the downloaded file.
-    - The file size of 0 means that this file comes from a manifest version that does not provide file sizes.
-    - The filename of None indicates that this file has been skipped or has not been downloaded.
-    """
-    if not s3_client:
-        s3_client = get_s3_client(session=session)
-
-    transfer_manager = get_s3_transfer_manager(s3_client=s3_client)
-
-    # The modified time in the manifest is in microseconds, but utime requires the time be expressed in seconds.
-    modified_time_override = file.mtime / 1000000  # type: ignore[attr-defined]
-
-    file_bytes = file.size
-
-    # Python will handle the path separator '/' correctly on every platform.
-    local_file_name = Path(local_download_dir).joinpath(file.path)
-
-    s3_key = (
-        f"{cas_prefix}/{file.hash}.{hash_algorithm.value}"
-        if cas_prefix
-        else f"{file.hash}.{hash_algorithm.value}"
-    )
-
+):
     # If the file name already exists, resolve the conflict based on the file_conflict_resolution
     if local_file_name.is_file():
         if file_conflict_resolution == FileConflictResolution.SKIP:
-            return (file_bytes, None)
+            return None
         elif file_conflict_resolution == FileConflictResolution.OVERWRITE:
             pass
         elif file_conflict_resolution == FileConflictResolution.CREATE_COPY:
@@ -450,9 +422,63 @@ def download_file(
         extra_args={"ExpectedBucketOwner": get_account_id(session=session)},
         subscribers=subscribers,
     )
+    future.result()
+    return future
+
+
+def download_file(
+    file: RelativeFilePath,
+    hash_algorithm: HashAlgorithm,
+    local_download_dir: str,
+    s3_bucket: str,
+    cas_prefix: Optional[str],
+    s3_client: Optional[BaseClient] = None,
+    session: Optional[boto3.Session] = None,
+    modified_time_override: Optional[float] = None,
+    progress_tracker: Optional[ProgressTracker] = None,
+    file_conflict_resolution: Optional[FileConflictResolution] = FileConflictResolution.CREATE_COPY,
+) -> Tuple[int, Optional[Path]]:
+    """
+    Downloads a file from the S3 bucket to the local directory. `modified_time_override` is ignored if the manifest
+    version used supports timestamps.
+    Returns a tuple of (size in bytes, filename) of the downloaded file.
+    - The file size of 0 means that this file comes from a manifest version that does not provide file sizes.
+    - The filename of None indicates that this file has been skipped or has not been downloaded.
+    """
+    if not s3_client:
+        s3_client = get_s3_client(session=session)
+
+    transfer_manager = get_s3_transfer_manager(s3_client=s3_client)
+
+    file_bytes = file.size
+
+    # The modified time in the manifest is in microseconds, but utime requires the time be expressed in seconds.
+    modified_time_override = file.mtime / 1000000  # type: ignore[attr-defined]
+
+    # Python will handle the path separator '/' correctly on every platform.
+    local_file_name = Path(local_download_dir).joinpath(file.path)
+
+    s3_key = (
+        f"{cas_prefix}/{file.hash}.{hash_algorithm.value}"
+        if cas_prefix
+        else f"{file.hash}.{hash_algorithm.value}"
+    )
 
     try:
-        future.result()
+        future = download_file_with_s3_key(
+            s3_bucket=s3_bucket,
+            s3_key=s3_key,
+            file_bytes=file_bytes,
+            transfer_manager=transfer_manager,
+            local_file_name=local_file_name,
+            session=session,
+            progress_tracker=progress_tracker,
+            file_conflict_resolution=file_conflict_resolution,
+        )
+
+        if future is None:
+            return (file_bytes, None)
+
     except concurrent.futures.CancelledError as ce:
         if progress_tracker and progress_tracker.continue_reporting is False:
             raise AssetSyncCancelledError("File download cancelled.")
@@ -490,6 +516,18 @@ def download_file(
         # TODO: Temporary to prevent breaking backwards-compatibility; if file not found, try again without hash alg postfix
         status_code = int(exc.response["ResponseMetadata"]["HTTPStatusCode"])
         if status_code == 404:
+
+            def handler(bytes_downloaded):
+                nonlocal progress_tracker
+                nonlocal future
+
+                if progress_tracker:
+                    should_continue = progress_tracker.track_progress_callback(bytes_downloaded)
+                    if not should_continue:
+                        future.cancel()
+
+            subscribers = [ProgressCallbackInvoker(handler)]
+
             s3_key = s3_key.rsplit(".", 1)[0]
             future = transfer_manager.download(
                 bucket=s3_bucket,
