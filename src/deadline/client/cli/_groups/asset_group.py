@@ -48,7 +48,7 @@ def cli_asset():
 @cli_asset.command(name="snapshot")
 @click.option("--root-dir", required=True, help="The root directory to snapshot. ")
 @click.option(
-    "--manifest-out", default=None, help="Destination path to directory where manifest is created. "
+    "--manifest-out", required=True, help="Destination path to manifest file that is created. "
 )
 @click.option(
     "--recursive",
@@ -66,14 +66,14 @@ def asset_snapshot(root_dir: str, manifest_out: str, recursive: bool, **args):
     if not os.path.isdir(root_dir):
         raise NonValidInputError(f"Specified root directory {root_dir} does not exist. ")
 
-    if manifest_out and not os.path.isdir(manifest_out):
-        raise NonValidInputError(f"Specified destination directory {manifest_out} does not exist. ")
-    elif manifest_out is None:
-        manifest_out = root_dir
-        click.echo(f"Manifest creation path defaulted to {root_dir} \n")
+    manifest_dir_path = os.path.dirname(manifest_out)
+    # manifest_file_name = os.path.basename(manifest_out)
+
+    if manifest_out and not os.path.isdir(manifest_dir_path):
+        raise NonValidInputError(f"Specified destination directory {manifest_dir_path} does not exist. ")
 
     inputs = []
-    for root, dirs, files in os.walk(root_dir):
+    for root, _, files in os.walk(root_dir):
         inputs.extend([str(os.path.join(root, file)) for file in files])
         if not recursive:
             break
@@ -82,7 +82,7 @@ def asset_snapshot(root_dir: str, manifest_out: str, recursive: bool, **args):
     asset_manager = S3AssetManager(
         farm_id=" ", queue_id=" ", job_attachment_settings=JobAttachmentS3Settings(" ", " ")
     )
-    asset_uploader = S3AssetUploader()
+    # asset_uploader = S3AssetUploader()
     hash_callback_manager = _ProgressBarCallbackManager(length=100, label="Hashing Attachments")
 
     upload_group = asset_manager.prepare_paths_for_upload(
@@ -102,19 +102,21 @@ def asset_snapshot(root_dir: str, manifest_out: str, recursive: bool, **args):
     for asset_root_manifests in manifests:
         if asset_root_manifests.asset_manifest is None:
             continue
-        source_root = Path(asset_root_manifests.root_path)
-        file_system_location_name = asset_root_manifests.file_system_location_name
-        (_, _, manifest_name) = asset_uploader._gather_upload_metadata(
-            manifest=asset_root_manifests.asset_manifest,
-            source_root=source_root,
-            file_system_location_name=file_system_location_name,
-        )
-        asset_uploader._write_local_input_manifest(
-            manifest_write_dir=manifest_out,
-            manifest_name=manifest_name,
-            manifest=asset_root_manifests.asset_manifest,
-            root_dir_name=os.path.basename(root_dir),
-        )
+        # source_root = Path(asset_root_manifests.root_path)
+        # file_system_location_name = asset_root_manifests.file_system_location_name
+        # (_, _, manifest_name) = asset_uploader._gather_upload_metadata(
+        #     manifest=asset_root_manifests.asset_manifest,
+        #     source_root=source_root,
+        #     file_system_location_name=file_system_location_name,
+        # )
+        # asset_uploader._write_local_input_manifest(
+        #     manifest_write_dir=manifest_dir_path,
+        #     manifest_name=manifest_file_name,
+        #     manifest=asset_root_manifests.asset_manifest,
+        #     root_dir_name=os.path.basename(root_dir),
+        # )
+        with open(manifest_out, "w") as file:
+            file.write(asset_root_manifests.asset_manifest.encode())
 
     click.echo(f"Manifest created at {manifest_out}\n")
 
@@ -123,12 +125,13 @@ def asset_snapshot(root_dir: str, manifest_out: str, recursive: bool, **args):
 @click.option("--root-dir", help="The root directory of assets to upload. ")
 @click.option(
     "--root-dir",
-    help="The root directory of assets to upload. Defaults to the parent directory of --manifest-dir if not specified. ",
+    default=None,
+    help="The root directory of assets to upload. Defaults to the parent directory of --manifest if not specified. ",
 )
 @click.option(
-    "--manifest-dir",
+    "--manifest",
     required=True,
-    help="The path to manifest folder of the directory specified for upload. ",
+    help="The path to manifest file of the directory specified for upload. ",
 )
 @click.option("--farm-id", help="The AWS Deadline Cloud Farm to use. ")
 @click.option("--queue-id", help="The AWS Deadline Cloud Queue to use. ")
@@ -140,16 +143,17 @@ def asset_snapshot(root_dir: str, manifest_out: str, recursive: bool, **args):
     default=False,
 )
 @_handle_error
-def asset_upload(root_dir: str, manifest_dir: str, update: bool, **args):
+def asset_upload(root_dir: str, manifest: str, update: bool, **args):
     """
     Uploads the assets in the provided manifest file to S3.
     """
+    manifest_dir_path = os.path.dirname(manifest)
 
-    if not os.path.isdir(manifest_dir):
-        raise NonValidInputError(f"Specified manifest directory {manifest_dir} does not exist. ")
+    if not os.path.isfile(manifest):
+        raise NonValidInputError(f"Specified manifest file {manifest} does not exist. ")
 
     if root_dir is None:
-        asset_root_dir = os.path.dirname(manifest_dir)
+        asset_root_dir = manifest_dir_path
     else:
         if not os.path.isdir(root_dir):
             raise NonValidInputError(f"Specified root directory {root_dir} does not exist. ")
@@ -188,12 +192,11 @@ def asset_upload(root_dir: str, manifest_dir: str, update: bool, **args):
     asset_uploader: S3AssetUploader = S3AssetUploader()
 
     # read local manifest into BaseAssetManifest object
-    asset_manifest: BaseAssetManifest = read_local_manifest(manifest=manifest_dir)
-    clear_S3_mapping(manifest=manifest_dir)
+    asset_manifest: BaseAssetManifest = read_local_manifest(manifest=manifest)
 
     if asset_manifest is None:
         raise NonValidInputError(
-            f"Specified manifest directory {manifest_dir} does contain valid manifest input file. "
+            f"Specified manifest file {manifest} does contain valid manifest inputs. "
         )
 
     asset_root_manifest: AssetRootManifest = AssetRootManifest(
@@ -204,7 +207,7 @@ def asset_upload(root_dir: str, manifest_dir: str, update: bool, **args):
     manifest_changes: List[tuple] = diff_manifest(
         asset_manager=asset_manager,
         asset_root_manifest=asset_root_manifest,
-        manifest=manifest_dir,
+        manifest=manifest,
         update=update,
     )
 
@@ -212,12 +215,12 @@ def asset_upload(root_dir: str, manifest_dir: str, update: bool, **args):
     if len(manifest_changes) > 0:
         if update:
             asset_root_manifest.asset_manifest = update_manifest(
-                manifest=manifest_dir, new_or_modified_paths=manifest_changes
+                manifest=manifest, new_or_modified_paths=manifest_changes
             )
             click.echo(f"Manifest information updated: {len(manifest_changes)} files updated. \n")
         else:
             raise ManifestOutdatedError(
-                f"Manifest contents in {manifest_dir} are outdated; versioning does not match local files in {asset_root_dir}. Please run with --update to fix current files. \n"
+                f"Manifest contents in {manifest} are outdated; versioning does not match local files in {asset_root_dir}. Please run with --update to fix current files. {manifest_changes}"
             )
 
     attachment_settings: dict = api.upload_attachments(
@@ -228,14 +231,22 @@ def asset_upload(root_dir: str, manifest_dir: str, update: bool, **args):
     )
 
     full_manifest_key: str = attachment_settings["manifests"][0]["inputManifestPath"]
-    manifest_name = os.path.basename(full_manifest_key)
-    manifest_dir_name = os.path.basename(manifest_dir)
-    asset_uploader._write_local_manifest_s3_mapping(
-        manifest_write_dir=asset_root_dir,
-        manifest_name=manifest_name,
-        full_manifest_key=full_manifest_key,
-        manifest_dir_name=manifest_dir_name,
-    )
+    local_manifest_name = os.path.basename(manifest)
+    s3_mapping_name = local_manifest_name + "_s3_mapping"
+    s3_mapping_filepath = Path(manifest_dir_path, s3_mapping_name)
+
+    clear_S3_mapping(s3_mapping_file=s3_mapping_filepath) # change to file, if no s3 mapping file return early !!!
+
+    mapping = {"local_file": s3_mapping_name, "s3_key": full_manifest_key} # test if changes of manifest reflects changes of s3_mapping
+    with open(s3_mapping_filepath, "a") as mapping_file:
+        mapping_file.write(f"{mapping}\n")
+
+    # asset_uploader._write_local_manifest_s3_mapping(
+    #     manifest_write_dir=asset_root_dir,
+    #     manifest_name=manifest_key_name,
+    #     full_manifest_key=full_manifest_key,
+    #     manifest_dir_name=local_manifest_name,
+    # )
 
     click.echo(f"Upload of {asset_root_dir} complete. \n")
 
@@ -243,9 +254,9 @@ def asset_upload(root_dir: str, manifest_dir: str, update: bool, **args):
 @cli_asset.command(name="diff")
 @click.option("--root-dir", help="The root directory to compare changes to. ")
 @click.option(
-    "--manifest-dir",
+    "--manifest",
     required=True,
-    help="The path to manifest folder of the directory to show changes of. ",
+    help="The path to manifest file of the directory to show changes of. ",
 )
 @click.option(
     "--raw",
@@ -255,19 +266,21 @@ def asset_upload(root_dir: str, manifest_dir: str, update: bool, **args):
     default=False,
 )
 @_handle_error
-def asset_diff(root_dir: str, manifest_dir: str, raw: bool, **args):
+def asset_diff(root_dir: str, manifest: str, raw: bool, **args):
     """
     Check file differences of a directory since last snapshot, specified by manifest.
     """
-    if not os.path.isdir(manifest_dir):
-        raise NonValidInputError(f"Specified manifest directory {manifest_dir} does not exist. ")
 
+    if not os.path.isfile(manifest):
+        raise NonValidInputError(f"Specified manifest directory {manifest} does not exist. ")
+    
     if root_dir is None:
-        asset_root_dir = os.path.dirname(manifest_dir)
+        asset_root_dir = os.path.dirname(manifest)
     else:
         if not os.path.isdir(root_dir):
             raise NonValidInputError(f"Specified root directory {root_dir} does not exist. ")
         asset_root_dir = root_dir
+
 
     asset_manager = S3AssetManager(
         farm_id=" ", queue_id=" ", job_attachment_settings=JobAttachmentS3Settings(" ", " ")
@@ -288,7 +301,7 @@ def asset_diff(root_dir: str, manifest_dir: str, raw: bool, **args):
         )
 
     # parse local manifest
-    local_manifest_object: BaseAssetManifest = read_local_manifest(manifest=manifest_dir)
+    local_manifest_object: BaseAssetManifest = read_local_manifest(manifest=manifest)
 
     # compare manifests
     differences: List[tuple] = compare_manifest(
@@ -296,7 +309,7 @@ def asset_diff(root_dir: str, manifest_dir: str, raw: bool, **args):
     )
 
     if raw:
-        click.echo(f"\nFile Diffs: {differences}")
+        click.echo(f"\n{differences}")
     else:
         click.echo(f"\n{asset_root_dir}")
         pretty_print(file_status_list=differences)
@@ -366,36 +379,37 @@ def asset_download(job_id: str, manifest_out: str, **args):
 
 def read_local_manifest(manifest: str) -> BaseAssetManifest:
     """
-    Read manifests specified by filepath to manifest folder, returns BaseAssetManifest Object
+    Read manifests specified by filepath to manifest file, returns BaseAssetManifest Object
     """
-    input_files = glob.glob(os.path.join(manifest, "*_input"))
+    # input_files = glob.glob(os.path.join(manifest, "*_input"))
 
-    if not input_files:
-        raise ValueError(f"No manifest files found in {manifest}")
-    elif len(input_files) >= 2:
-        raise NonValidInputError(
-            f"Multiple input manifest files are not supported, found: {input_files}."
-        )
+    # if not input_files:
+    #     raise ValueError(f"No manifest files found in {manifest}")
+    # elif len(input_files) >= 2:
+    #     raise NonValidInputError(
+    #         f"Multiple input manifest files are not supported, found: {input_files}."
+    #     )
 
-    manifest_file_path = input_files[0]
+    # manifest_file_path = input_files[0]
 
-    with open(manifest_file_path, "r") as input_file:
+    with open(manifest, "r") as input_file:
         manifest_data_str = input_file.read()
         asset_manifest = decode_manifest(manifest_data_str)
 
         return asset_manifest
 
 
-def clear_S3_mapping(manifest: str):
+def clear_S3_mapping(s3_mapping_file: str):
     """
     Clears manifest_s3_mapping file contents if it previously exists.
     """
-    for filename in os.listdir(manifest):
-        if filename.endswith("manifest_s3_mapping"):
-            # if S3 mapping already exists, clear contents
-            filepath = os.path.join(manifest, filename)
-            with open(filepath, "w") as _:
-                pass
+    # for filename in os.listdir(manifest):
+    #     if filename.endswith("manifest_s3_mapping"):
+    #         # if S3 mapping already exists, clear contents
+    #         filepath = os.path.join(manifest, filename)
+    if s3_mapping_file.is_file():
+        with open(s3_mapping_file, "w") as _:
+            pass
 
 
 def diff_manifest(
@@ -407,7 +421,7 @@ def diff_manifest(
     """
     Gets the file paths in specified manifest if the contents of file have changed since its last snapshot.
     """
-    manifest_dir_name = os.path.basename(manifest)
+    manifest_file_name = os.path.basename(manifest)
     root_path = asset_root_manifest.root_path
     input_paths: List[Path] = []
 
@@ -416,10 +430,11 @@ def diff_manifest(
         raise NonValidInputError("Manifest object not found, please check input manifest. ")
 
     for base_manifest_path in asset_manifest.paths:
-        if base_manifest_path.path.startswith(manifest_dir_name):
-            # skip the manifest folder, or else every upload will need an update after a previous change
+        if base_manifest_path.path == manifest_file_name:
+            # skip the manifest file, or else every upload will need an update after a previous change
             continue
         input_paths.append(Path(root_path, base_manifest_path.path))
+
 
     return find_file_with_status(
         asset_manager=asset_manager,
@@ -468,18 +483,18 @@ def update_manifest(manifest: str, new_or_modified_paths: List[tuple]) -> BaseAs
     """
     Updates the local manifest file to reflect modified or new files
     """
-    input_files = glob.glob(os.path.join(manifest, "*_input"))
+    # input_files = glob.glob(os.path.join(manifest, "*_input"))
 
-    if not input_files:
-        raise ValueError(f"No manifest files found in {manifest}")
-    elif len(input_files) >= 2:
-        raise NonValidInputError(
-            f"Multiple input manifest files are not supported, found: {input_files}."
-        )
+    # if not input_files:
+    #     raise ValueError(f"No manifest files found in {manifest}")
+    # elif len(input_files) >= 2:
+    #     raise NonValidInputError(
+    #         f"Multiple input manifest files are not supported, found: {input_files}."
+    #     )
 
-    manifest_file_path = input_files[0]
+    # manifest_file_path = input_files[0]
 
-    with open(manifest_file_path, "r") as manifest_file:
+    with open(manifest, "r") as manifest_file:
         manifest_data_str = manifest_file.read()
         local_base_asset_manifest = decode_manifest(manifest_data_str)
 
@@ -500,7 +515,7 @@ def update_manifest(manifest: str, new_or_modified_paths: List[tuple]) -> BaseAs
     # write to local manifest
     updated_path_list = list(manifest_info_dict.values())
     local_base_asset_manifest.paths = updated_path_list
-    with open(manifest_file_path, "w") as manifest_file:
+    with open(manifest, "w") as manifest_file:
         manifest_file.write(local_base_asset_manifest.encode())
 
     return local_base_asset_manifest

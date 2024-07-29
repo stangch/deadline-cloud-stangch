@@ -784,6 +784,10 @@ class S3AssetManager:
             raise AssetSyncCancelledError(
                 "File hashing cancelled.", progress_tracker.get_summary_statistics()
             )
+        if not path.is_file():
+            raise AssetSyncCancelledError(
+                f"Specified directory {root_path} is missing file {path} taken from manifest. "
+            )
 
         manifest_model: Type[BaseManifestModel] = ManifestModelRegistry.get_manifest_model(
             version=self.manifest_version
